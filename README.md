@@ -5,7 +5,7 @@ This is a simple example of how to use EffectTS with React.
 - User behavior and component rerender are tracked with spans
 - CQRS-based state management and an atomic approach to global React state management inspired by [Jotai](https://jotai.org/)
 
-## An effect component using the state
+## Effect state
 
 ```tsx
 import { component, dispatcher, getter, render, state } from "effect-react";
@@ -29,7 +29,7 @@ const Counter = component(
 );
 ```
 
-## An effect domain
+## Effect domain
 
 ```tsx
 import { Domain } from "effect-react";
@@ -51,7 +51,7 @@ const CounterDomain = Domain.make("counter", () =>
 );
 ```
 
-## An effect component using the domain
+### An effect component using the domain
 
 ```tsx
 const CounterButton = component(
