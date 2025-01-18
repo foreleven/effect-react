@@ -137,3 +137,5 @@ const CounterButton = component(
   })
 );
 ```
+
+![Tracing](./docs/assets/tracing.png)
