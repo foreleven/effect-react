@@ -3,43 +3,37 @@ import { Domain } from "../src/domain";
 import "./App.css";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
-import { component, dispatcher, render } from "@/react";
+import { component, dispatcher, getter, render } from "@/react";
 
 export const CounterDomain = Domain.make("counter", () =>
   Effect.gen(function* () {
     const count = yield* Domain.state(0);
-    const text = yield* Domain.state("hello");
 
     return {
       query: {
         count: count.value.pipe(Effect.map((v) => v * 2)),
-        text: text.value,
       },
       command: {
         incr: (i: number) => Domain.set(count, (v) => v + i),
-        setText: (t: string) => Domain.set(text, t),
       },
     };
   })
 );
 
-const XInput = component("Input", () =>
+const CounterButton = component(
+  "CounterButton",
   Effect.gen(function* () {
-    const counter = yield* CounterDomain.tag;
-    const get = yield* Domain.getter;
-    const send = yield* dispatcher;
+    const domain = yield* CounterDomain.tag;
+    const get = yield* getter;
+    const dispatch = yield* dispatcher;
     return yield* render(() => (
-      <>
-        <input
-          value={get(counter.query.text)}
-          onChange={(e) => {
-            send(counter.command.setText(e.target.value)).pipe(
-              Effect.withSpan("input change")
-            );
-          }}
-        />
-        {get(counter.query.count)}
-      </>
+      <button
+        onClick={() => {
+          dispatch(domain.command.incr(1));
+        }}
+      >
+        {get(domain.query.count)}
+      </button>
     ));
   })
 );
@@ -47,10 +41,9 @@ const XInput = component("Input", () =>
 export const App = component(
   "App",
   Effect.gen(function* () {
-    const counter = yield* CounterDomain.tag;
-    const get = yield* Domain.getter;
-    const dispatch = yield* dispatcher;
-    const Input = yield* XInput();
+    const domain = yield* CounterDomain.tag;
+    const get = yield* getter;
+    const Counter = yield* CounterButton.component;
     return yield* render(() => (
       <>
         <div>
@@ -63,21 +56,8 @@ export const App = component(
         </div>
         <h1>Vite + React</h1>
         <div className="card">
-          <button
-            onClick={() => {
-              console.log("do incr");
-              dispatch(
-                counter.command.incr(1).pipe(Effect.withSpan("button click"))
-              );
-            }}
-          >
-            count is {get(counter.query.count)}
-          </button>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test HMR
-          </p>
-          <Input />
-          <Input />
+          <Counter />
+          <p>The counter is {get(domain.query.count)}</p>
         </div>
         <p className="read-the-docs">
           Click on the Vite and React logos to learn more

@@ -130,6 +130,9 @@ export interface State<D = unknown> {
   readonly ref: SubscriptionRef.SubscriptionRef<D>;
   readonly value: Effect.Effect<D, never, Consumer>;
   readonly consumers: Set<Consumer>;
+  readonly update: (
+    update: (value: D) => D
+  ) => Effect.Effect<void, never, Trigger>;
 }
 
 /**
@@ -149,6 +152,7 @@ export const state = <Value>(value: Value) =>
         state.consumers.add(consumer);
         return value;
       }),
+      update: (update) => set(state, update),
     };
     return state;
   });
@@ -305,7 +309,6 @@ export const makeConsumer = <A = unknown>(key: string) => {
           const span = yield* Effect.currentSpan.pipe(
             Effect.catchAllCause(() => Effect.succeed(undefined))
           );
-          console.log("callback", span?.spanId);
           yield* ps.offer({ value, trigger, span });
         }),
     };
@@ -347,15 +350,6 @@ export const set: Setter = <Value>(
         .pipe(Effect.provide(Layer.succeed(Trigger, trigger)));
     }
   }).pipe(Effect.withSpan("state:change"));
-
-export const getter = Effect.gen(function* () {
-  const consumer = yield* Consumer;
-  return <V>(eff: Effect.Effect<V, never, Consumer>) => {
-    return Effect.runSync(
-      Effect.provide(eff, Layer.succeed(Consumer, consumer))
-    );
-  };
-});
 
 export type Trigger = {
   name: string;

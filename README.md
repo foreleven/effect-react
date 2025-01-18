@@ -1,50 +1,139 @@
-# React + TypeScript + Vite
+# React + EffectTS
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+This is a simple example of how to use EffectTS with React.
 
-Currently, two official plugins are available:
+- User behavior and component rerender are tracked with spans
+- CQRS-based state management and an atomic approach to global React state management inspired by [Jotai](https://jotai.org/)
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react/README.md) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## An effect component using the state
 
-## Expanding the ESLint configuration
+```tsx
+import { component, dispatcher, getter, render, state } from "effect-react";
+import { Effect } from "effect";
 
-If you are developing a production application, we recommend updating the configuration to enable type aware lint rules:
-
-- Configure the top-level `parserOptions` property like this:
-
-```js
-export default tseslint.config({
-  languageOptions: {
-    // other options...
-    parserOptions: {
-      project: ["./tsconfig.node.json", "./tsconfig.app.json"],
-      tsconfigRootDir: import.meta.dirname,
-    },
-  },
-});
+const Counter = component(
+  "Counter",
+  Effect.gen(function* () {
+    const count = yield* state(0);
+    const get = yield* getter;
+    const dispatch = yield* dispatcher;
+    return yield* render(() => (
+      <div>
+        Counter: {get(count.value)}
+        <button onClick={() => dispatch(count.update((n) => n + 1))}>
+          Increment
+        </button>
+      </div>
+    ));
+  })
+);
 ```
 
-- Replace `tseslint.configs.recommended` to `tseslint.configs.recommendedTypeChecked` or `tseslint.configs.strictTypeChecked`
-- Optionally add `...tseslint.configs.stylisticTypeChecked`
-- Install [eslint-plugin-react](https://github.com/jsx-eslint/eslint-plugin-react) and update the config:
+## An effect domain
 
-```js
-// eslint.config.js
-import react from "eslint-plugin-react";
+```tsx
+import { Domain } from "effect-react";
 
-export default tseslint.config({
-  // Set the react version
-  settings: { react: { version: "18.3" } },
-  plugins: {
-    // Add the react plugin
-    react,
-  },
-  rules: {
-    // other rules...
-    // Enable its recommended rules
-    ...react.configs.recommended.rules,
-    ...react.configs["jsx-runtime"].rules,
-  },
-});
+const CounterDomain = Domain.make("counter", () =>
+  Effect.gen(function* () {
+    const count = yield* Domain.state(0);
+
+    return {
+      query: {
+        count: count.value.pipe(Effect.map((v) => v * 2)),
+      },
+      command: {
+        incr: (i: number) => Domain.set(count, (v) => v + i),
+        decr: (i: number) => Domain.set(count, (v) => v - i),
+      },
+    };
+  })
+);
+```
+
+## An effect component using the domain
+
+```tsx
+const CounterButton = component(
+  "CounterButton",
+  Effect.gen(function* () {
+    const domain = yield* CounterDomain.tag;
+    const get = yield* getter;
+    const dispatch = yield* dispatcher;
+    return yield* render(() => (
+      <button
+        onClick={() => {
+          dispatch(domain.command.incr(1));
+        }}
+      >
+        {get(domain.query.count)}
+      </button>
+    ));
+  })
+);
+
+const App = component(
+  "App",
+  Effect.gen(function* () {
+    const domain = yield* CounterDomain.tag;
+    const get = yield* getter;
+    const Counter = yield* CounterButton.component;
+    return yield* render(() => <div>Counter: {get(domain.query.count)} </div>);
+  }).pipe(Effect.provide(CounterDomain.layer))
+);
+```
+
+## Mount the root component
+
+```tsx
+import { mount } from "effect-react";
+import { Effect, ManagedRuntime } from "effect";
+import { createRoot } from "react-dom/client";
+import { App } from "./App.tsx";
+
+const runtime = ManagedRuntime.make(TraceLive);
+
+runtime.runFork(
+  Effect.gen(function* () {
+    const root = createRoot(document.getElementById("root")!);
+    yield* mount(App.component, (Root) => {
+      root.render(<Root />);
+    });
+  })
+);
+```
+
+## Enable tracing with Effect
+
+### Start local docker container
+
+```sh
+cd ./docker/local
+docker compose up
+```
+
+### Effect with span
+
+```tsx
+import { Effect } from "effect";
+
+const CounterButton = component(
+  "CounterButton",
+  Effect.gen(function* () {
+    const domain = yield* CounterDomain.tag;
+    const get = yield* getter;
+    const dispatch = yield* dispatcher;
+    return yield* render(() => (
+      <button
+        onClick={() => {
+          dispatch(domain.command.incr(1)).pipe(
+            Effect.withSpan("click incr button")
+          );
+        }}
+      >
+        {get(domain.query.count)}
+      </button>
+    ));
+  })
+);
 ```

@@ -10,7 +10,7 @@ const runtime = ManagedRuntime.make(TraceLive);
 runtime.runFork(
   Effect.gen(function* () {
     const root = createRoot(document.getElementById("root")!);
-    yield* mount(App, (Root) => {
+    yield* mount(App.component, (Root) => {
       root.render(<Root />);
     });
   })

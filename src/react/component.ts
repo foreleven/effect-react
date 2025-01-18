@@ -15,15 +15,20 @@ export type EffectComponent<Args, C, E, R> =
  * @since 1.0.0
  * @category types
  */
-export type EffectComponentExcludeConsumer<EC> = EC extends EffectComponent<
+export type EffectComponentBuilder<EC> = EC extends EffectComponent<
   infer Args,
   infer C,
   infer E,
   infer R
 >
   ? EC extends Effect.Effect<C, E, R>
-    ? Effect.Effect<C, E, Exclude<R, Consumer>>
-    : (...args: Args[]) => Effect.Effect<C, E, Exclude<R, Consumer>>
+    ? { name: string; component: Effect.Effect<C, E, Exclude<R, Consumer>> }
+    : {
+        name: string;
+        component: (
+          ...args: Args[]
+        ) => Effect.Effect<C, E, Exclude<R, Consumer>>;
+      }
   : never;
 
 type Component = {
@@ -47,29 +52,11 @@ export const component = <
 >(
   name: string,
   eff: EC
-): EffectComponentExcludeConsumer<EC> => {
+): EffectComponentBuilder<EC> => {
   if (Effect.isEffect(eff)) {
-    return Effect.gen(function* () {
-      const parent = yield* Component;
-      const consumer = yield* makeConsumer(`component:${name}`);
-      const component: Component = {
-        name,
-        children: [],
-        consumer,
-      };
-      parent.children.push(component);
-      return yield* Effect.provide(
-        eff,
-        Layer.mergeAll(
-          Layer.succeed(Consumer, consumer),
-          Layer.succeed(Component, component)
-        )
-      ).pipe(Effect.withSpan(`${name} component`));
-    }) as EffectComponentExcludeConsumer<EC>;
-  } else {
-    const effect = eff as (...args: Args[]) => Effect.Effect<C, E, R>;
-    return ((...args: Args[]) => {
-      return Effect.gen(function* () {
+    return {
+      name,
+      component: Effect.gen(function* () {
         const parent = yield* Component;
         const consumer = yield* makeConsumer(`component:${name}`);
         const component: Component = {
@@ -77,18 +64,48 @@ export const component = <
           children: [],
           consumer,
         };
+
         parent.children.push(component);
-        return yield* effect(...args).pipe(
-          Effect.provide(
-            Layer.mergeAll(
-              Layer.succeed(Consumer, consumer),
-              Layer.succeed(Component, component)
-            )
-          ),
-          Effect.withSpan(`${name} component`)
-        );
-      });
-    }) as unknown as EffectComponentExcludeConsumer<EC>;
+        const builder = yield* Effect.provide(
+          eff,
+          Layer.mergeAll(
+            Layer.succeed(Consumer, consumer),
+            Layer.succeed(Component, component)
+          )
+        ).pipe(Effect.withSpan(`${name} component`));
+        return builder;
+      }),
+    } as EffectComponentBuilder<EC>;
+  } else {
+    const effect = eff as (...args: Args[]) => Effect.Effect<C, E, R>;
+    return {
+      name,
+      component: (...args: Args[]) => {
+        return Effect.gen(function* () {
+          const parent = yield* Component;
+          const consumer = yield* makeConsumer(`component:${name}`);
+          const component: Component = {
+            name,
+            children: [],
+            consumer,
+          };
+          parent.children.push(component);
+          const builder = yield* effect(...args).pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(Consumer, consumer),
+                Layer.succeed(Component, component)
+              )
+            ),
+            Effect.withSpan(`${name} component`)
+          );
+          return {
+            ...component,
+            component: builder,
+          };
+        });
+      },
+    } as unknown as EffectComponentBuilder<EC>;
   }
 };
 
@@ -111,7 +128,6 @@ export const render = (jsx: () => JSX.Element) => {
       .pipe(Effect.withSpan("component:mount"));
     const fiber = yield* Effect.fork(mount);
     renderer.fibers.push(fiber);
-    console.log("component", component.name);
 
     return memo(() => {
       const [value, setValue] = useState(0);
@@ -130,18 +146,11 @@ export const render = (jsx: () => JSX.Element) => {
                 });
                 const rerender = Effect.promise(() => {
                   return promise;
-                })
-                  .pipe(
-                    Effect.tap(() =>
-                      Effect.log("rerendered:" + component.name, e.span?.spanId)
-                    )
-                  )
-                  .pipe(
-                    Effect.withSpan("component:rerender", { parent: e.span })
-                  );
+                }).pipe(
+                  Effect.withSpan("component:rerender", { parent: e.span })
+                );
                 const fiber = Runtime.runFork(runtime)(rerender);
                 e.trigger.fibers.push(fiber);
-                console.log("rerender ref 22", rerenderRef.current, resolver);
               });
             })
           )
@@ -157,7 +166,6 @@ export const render = (jsx: () => JSX.Element) => {
         if (rerenderRef.current) {
           rerenderRef.current();
           rerenderRef.current = null;
-          console.log("rerender ref 33");
         }
       }, [value]);
 
@@ -167,14 +175,6 @@ export const render = (jsx: () => JSX.Element) => {
           rerenderRef.current = null;
         }
       }, []);
-
-      //   const start = performance.now();
-      //   // Do a lot of work
-      //   for (let i = 0; i < 100000000; i++) {
-      //
-      //   }
-      //   const end = performance.now();
-      //   console.log("work", end - start);
 
       const element = React.createElement(jsx);
       return element;
@@ -219,6 +219,16 @@ export const mount = <P>(
     mountRenderer.fibers = [];
   });
 };
+
+export const getter = Effect.gen(function* () {
+  const consumer = yield* Consumer;
+  const runtime = yield* Effect.runtime();
+  return <V>(eff: Effect.Effect<V, never, Consumer>) => {
+    return Runtime.runSync(runtime)(
+      Effect.provide(eff, Layer.succeed(Consumer, consumer))
+    );
+  };
+});
 
 export const dispatcher = Effect.gen(function* () {
   const consumer = yield* Consumer;
