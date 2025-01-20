@@ -2,10 +2,6 @@
 
 This is a simple example of how to use EffectTS with React.
 
-- [x] User behavior and component rerender are tracked with spans
-- [x] CQRS-based state management
-- [ ] Async data fetching with React Suspense
-
 ## Effect state
 
 ```tsx
