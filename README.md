@@ -2,8 +2,9 @@
 
 This is a simple example of how to use EffectTS with React.
 
-- User behavior and component rerender are tracked with spans
-- CQRS-based state management and an atomic approach to global React state management inspired by [Jotai](https://jotai.org/)
+- [x] User behavior and component rerender are tracked with spans
+- [x] CQRS-based state management
+- [ ] Async data fetching with React Suspense
 
 ## Effect state
 

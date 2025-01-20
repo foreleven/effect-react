@@ -1,43 +1,29 @@
 import { Consumer, makeConsumer, Trigger } from "@/domain/domain";
-import { Context, Effect, Fiber, Layer, Runtime, Stream } from "effect";
-import React, { useLayoutEffect, useRef } from "react";
+import { Effect, Fiber, Layer, Runtime, Stream } from "effect";
+import React, { ComponentType, useLayoutEffect, useRef } from "react";
 import { memo, useEffect, useState } from "react";
+import { ComponentContext, withRuntime } from "./Context";
+import * as internal from "./internal";
 
 /**
  * @since 1.0.0
  * @category types
  */
-export type EffectComponent<Args, C, E, R> =
-  | Effect.Effect<C, E, R>
-  | ((...args: Args[]) => Effect.Effect<C, E, R>);
+export type EffectComponent<Args, C, E, R> = internal.EffectComponent<
+  Args,
+  C,
+  E,
+  R
+>;
 
 /**
  * @since 1.0.0
  * @category types
  */
-export type EffectComponentBuilder<EC> = EC extends EffectComponent<
-  infer Args,
-  infer C,
-  infer E,
-  infer R
->
-  ? EC extends Effect.Effect<C, E, R>
-    ? { name: string; component: Effect.Effect<C, E, Exclude<R, Consumer>> }
-    : {
-        name: string;
-        component: (
-          ...args: Args[]
-        ) => Effect.Effect<C, E, Exclude<R, Consumer>>;
-      }
-  : never;
+export type EffectComponentBuilder<EC> = internal.EffectComponentBuilder<EC>;
 
-type Component = {
-  name: string;
-  children: Component[];
-  consumer: Consumer;
-};
-
-const Component = Context.GenericTag<Component>("@effect/state/component");
+export type Component = internal.Component;
+export const Component = internal.Component;
 
 /**
  * @since 1.0.0
@@ -45,7 +31,8 @@ const Component = Context.GenericTag<Component>("@effect/state/component");
  */
 export const component = <
   Args,
-  C extends () => JSX.Element,
+  P,
+  C extends ComponentType<P>,
   E,
   R,
   EC = EffectComponent<Args, C, E, R>
@@ -113,7 +100,9 @@ export const component = <
  * @since 1.0.0
  * @category react
  */
-export const render = (jsx: () => JSX.Element) => {
+export const render = (
+  reactComponent: React.ComponentType
+): Effect.Effect<React.ComponentType, never, Component | Trigger> => {
   return Effect.gen(function* () {
     const component = yield* Component;
     const renderer = yield* Trigger;
@@ -125,9 +114,10 @@ export const render = (jsx: () => JSX.Element) => {
       });
     })
       .pipe(Effect.tap(() => Effect.log("mounted:" + component.name)))
-      .pipe(Effect.withSpan("component:mount"));
+      .pipe(Effect.withSpan(`component:mount:${component.name}`));
     const fiber = yield* Effect.fork(mount);
     renderer.fibers.push(fiber);
+    const context = yield* Effect.context();
 
     return memo(() => {
       const [value, setValue] = useState(0);
@@ -147,7 +137,9 @@ export const render = (jsx: () => JSX.Element) => {
                 const rerender = Effect.promise(() => {
                   return promise;
                 }).pipe(
-                  Effect.withSpan("component:rerender", { parent: e.span })
+                  Effect.withSpan(`component:rerender:${component.name}`, {
+                    parent: e.span,
+                  })
                 );
                 const fiber = Runtime.runFork(runtime)(rerender);
                 e.trigger.fibers.push(fiber);
@@ -176,23 +168,23 @@ export const render = (jsx: () => JSX.Element) => {
         }
       }, []);
 
-      const element = React.createElement(jsx);
-      return element;
+      const ReactComponent = reactComponent;
+      return (
+        <ComponentContext.Provider value={{ component, context }}>
+          <ReactComponent />
+        </ComponentContext.Provider>
+      );
     });
-  });
-};
-
-export const mount = <P>(
-  app: Effect.Effect<
-    React.MemoExoticComponent<() => React.FunctionComponentElement<P>>,
+  }) as unknown as Effect.Effect<
+    React.ComponentType,
     never,
     Component | Trigger
-  >,
-  renderer: (
-    component: React.MemoExoticComponent<
-      () => React.FunctionComponentElement<P>
-    >
-  ) => void
+  >;
+};
+
+export const mount = <P extends object>(
+  app: Effect.Effect<React.ComponentType<P>, never, Component | Trigger>,
+  renderer: (component: React.ComponentType<P>) => void
 ) => {
   return Effect.gen(function* () {
     const consumer = yield* makeConsumer(`component:root`);
@@ -205,6 +197,8 @@ export const mount = <P>(
       name: "mount",
       fibers: [],
     };
+    const runtime = yield* Effect.runtime();
+
     const App = yield* Effect.provide(
       app,
       Layer.mergeAll(
@@ -212,7 +206,10 @@ export const mount = <P>(
         Layer.succeed(Component, component)
       )
     );
-    renderer(App);
+
+    const WrappedApp = withRuntime(runtime, App);
+    renderer(WrappedApp);
+
     for (const fiber of mountRenderer.fibers) {
       yield* Fiber.await(fiber);
     }
@@ -223,9 +220,9 @@ export const mount = <P>(
 export const getter = Effect.gen(function* () {
   const consumer = yield* Consumer;
   const runtime = yield* Effect.runtime();
-  return <V>(eff: Effect.Effect<V, never, Consumer>) => {
+  return function get<V>(effect: Effect.Effect<V, never, Consumer>) {
     return Runtime.runSync(runtime)(
-      Effect.provide(eff, Layer.succeed(Consumer, consumer))
+      Effect.provide(effect, Layer.succeed(Consumer, consumer))
     );
   };
 });
@@ -233,14 +230,14 @@ export const getter = Effect.gen(function* () {
 export const dispatcher = Effect.gen(function* () {
   const consumer = yield* Consumer;
   const runtime = yield* Effect.runtime();
-  return <A>(eff: Effect.Effect<A, never, Trigger>) => {
+  return function dispatch<A>(effect: Effect.Effect<A, never, Trigger>) {
     const renderer: Trigger = {
       name: "dispatcher",
       fibers: [],
     };
     return Runtime.runFork(runtime)(
       Effect.gen(function* () {
-        yield* eff.pipe(
+        yield* effect.pipe(
           Effect.provide(Layer.succeed(Trigger, renderer)),
           Effect.provide(Layer.succeed(Consumer, consumer))
         );

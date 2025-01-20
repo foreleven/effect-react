@@ -3,7 +3,7 @@ import { Domain } from "../src/domain";
 import "./App.css";
 import reactLogo from "./assets/react.svg";
 import viteLogo from "/vite.svg";
-import { component, dispatcher, getter, render } from "@/react";
+import { Loader, component, dispatcher, getter, render } from "@/react";
 
 export const CounterDomain = Domain.make("counter", () =>
   Effect.gen(function* () {
@@ -43,7 +43,6 @@ export const App = component(
   Effect.gen(function* () {
     const domain = yield* CounterDomain.tag;
     const get = yield* getter;
-    const Counter = yield* CounterButton.component;
     return yield* render(() => (
       <>
         <div>
@@ -56,7 +55,7 @@ export const App = component(
         </div>
         <h1>Vite + React</h1>
         <div className="card">
-          <Counter />
+          <Loader component={CounterButton.component} />
           <p>The counter is {get(domain.query.count)}</p>
         </div>
         <p className="read-the-docs">
