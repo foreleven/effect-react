@@ -338,22 +338,25 @@ export const set: Setter = <Value>(
     } else {
       newValue = update;
     }
-    yield* Ref.set(state.ref, newValue);
     // check if the value is the same
     if (Equal.equals(old, newValue)) {
       return;
     }
-
+    yield* Ref.set(state.ref, newValue).pipe(
+      Effect.withSpan("state change", {
+        attributes: { from: old, to: newValue },
+      })
+    );
     for (const c of state.consumers) {
       yield* c
         .callback(newValue)
         .pipe(Effect.provide(Layer.succeed(Trigger, trigger)));
     }
-  }).pipe(Effect.withSpan("state:change"));
+  });
 
 export type Trigger = {
   name: string;
-  fibers: Array<Fiber.RuntimeFiber<void, never>>;
+  fibers: Array<Fiber.RuntimeFiber<void, unknown>>;
 };
 
 export const Trigger = Context.GenericTag<Trigger>("@effect/state/trigger");

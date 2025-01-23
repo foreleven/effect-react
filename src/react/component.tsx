@@ -1,26 +1,9 @@
 import { Consumer, makeConsumer, Trigger } from "@/domain/domain";
 import { Effect, Fiber, Layer, Runtime, Stream } from "effect";
-import React, { ComponentType, useLayoutEffect, useRef } from "react";
+import React, { useLayoutEffect, useMemo, useRef } from "react";
 import { memo, useEffect, useState } from "react";
 import { ComponentContext, withRuntime } from "./Context";
 import * as internal from "./internal";
-
-/**
- * @since 1.0.0
- * @category types
- */
-export type EffectComponent<Args, C, E, R> = internal.EffectComponent<
-  Args,
-  C,
-  E,
-  R
->;
-
-/**
- * @since 1.0.0
- * @category types
- */
-export type EffectComponentBuilder<EC> = internal.EffectComponentBuilder<EC>;
 
 export type Component = internal.Component;
 export const Component = internal.Component;
@@ -29,80 +12,15 @@ export const Component = internal.Component;
  * @since 1.0.0
  * @category constructors
  */
-export const component = <
-  Args,
-  P,
-  C extends ComponentType<P>,
-  E,
-  R,
-  EC = EffectComponent<Args, C, E, R>
->(
-  name: string,
-  eff: EC
-): EffectComponentBuilder<EC> => {
-  if (Effect.isEffect(eff)) {
-    return {
-      name,
-      component: Effect.gen(function* () {
-        const parent = yield* Component;
-        const consumer = yield* makeConsumer(`component:${name}`);
-        const component: Component = {
-          name,
-          children: [],
-          consumer,
-        };
-
-        parent.children.push(component);
-        const builder = yield* Effect.provide(
-          eff,
-          Layer.mergeAll(
-            Layer.succeed(Consumer, consumer),
-            Layer.succeed(Component, component)
-          )
-        ).pipe(Effect.withSpan(`${name} component`));
-        return builder;
-      }),
-    } as EffectComponentBuilder<EC>;
-  } else {
-    const effect = eff as (...args: Args[]) => Effect.Effect<C, E, R>;
-    return {
-      name,
-      component: (...args: Args[]) => {
-        return Effect.gen(function* () {
-          const parent = yield* Component;
-          const consumer = yield* makeConsumer(`component:${name}`);
-          const component: Component = {
-            name,
-            children: [],
-            consumer,
-          };
-          parent.children.push(component);
-          const builder = yield* effect(...args).pipe(
-            Effect.provide(
-              Layer.mergeAll(
-                Layer.succeed(Consumer, consumer),
-                Layer.succeed(Component, component)
-              )
-            ),
-            Effect.withSpan(`${name} component`)
-          );
-          return {
-            ...component,
-            component: builder,
-          };
-        });
-      },
-    } as unknown as EffectComponentBuilder<EC>;
-  }
-};
+export const component = internal.component;
 
 /**
  * @since 1.0.0
  * @category react
  */
-export const render = (
-  reactComponent: React.ComponentType
-): Effect.Effect<React.ComponentType, never, Component | Trigger> => {
+export const render = <P,>(
+  reactComponent: React.ComponentType<P>
+): Effect.Effect<React.ComponentType<P>, never, Component | Trigger> => {
   return Effect.gen(function* () {
     const component = yield* Component;
     const renderer = yield* Trigger;
@@ -119,7 +37,7 @@ export const render = (
     renderer.fibers.push(fiber);
     const context = yield* Effect.context();
 
-    return memo(() => {
+    return memo((props: P) => {
       const [value, setValue] = useState(0);
       const rerenderRef = useRef<null | (() => void)>(resolver);
       useEffect(() => {
@@ -131,6 +49,7 @@ export const render = (
                 if (rerenderRef.current != null) {
                   return;
                 }
+                console.log("trace id:", e.span?.traceId);
                 const promise = new Promise<void>((resolve) => {
                   rerenderRef.current = resolve;
                 });
@@ -169,14 +88,15 @@ export const render = (
       }, []);
 
       const ReactComponent = reactComponent;
+      const cc = useMemo(() => ({ component, context }), []);
       return (
-        <ComponentContext.Provider value={{ component, context }}>
-          <ReactComponent />
+        <ComponentContext.Provider value={cc}>
+          <ReactComponent {...(props as JSX.IntrinsicAttributes & P)} />
         </ComponentContext.Provider>
       );
     });
   }) as unknown as Effect.Effect<
-    React.ComponentType,
+    React.ComponentType<P>,
     never,
     Component | Trigger
   >;
@@ -209,7 +129,6 @@ export const mount = <P extends object>(
 
     const WrappedApp = withRuntime(runtime, App);
     renderer(WrappedApp);
-
     for (const fiber of mountRenderer.fibers) {
       yield* Fiber.await(fiber);
     }
@@ -230,7 +149,9 @@ export const getter = Effect.gen(function* () {
 export const dispatcher = Effect.gen(function* () {
   const consumer = yield* Consumer;
   const runtime = yield* Effect.runtime();
-  return function dispatch<A>(effect: Effect.Effect<A, never, Trigger>) {
+  return function dispatch<
+    A
+  >(action: string, effect: Effect.Effect<A, never, Trigger>) {
     const renderer: Trigger = {
       name: "dispatcher",
       fibers: [],
@@ -239,9 +160,15 @@ export const dispatcher = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* effect.pipe(
           Effect.provide(Layer.succeed(Trigger, renderer)),
-          Effect.provide(Layer.succeed(Consumer, consumer))
+          Effect.provide(Layer.succeed(Consumer, consumer)),
+          Effect.withSpan(`dispatch:${action}`)
         );
-      })
+
+        for (const fiber of renderer.fibers) {
+          yield* Fiber.join(fiber);
+        }
+        renderer.fibers = [];
+      }).pipe(Effect.andThen(Effect.interrupt))
     );
   };
 });
